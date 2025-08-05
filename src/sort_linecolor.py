@@ -44,30 +44,41 @@ for cluster_idx, count in zip(unique, counts):
 total_pixels = data.shape[0]
 pixel_ratios = pixel_counts / total_pixels
 
+# 가장 가까운 클러스터 색상 (BGR → RGB for plotting)
+cluster_colors_bgr = [centers[closest_target_idx == i][0] for i in range(3)]
+cluster_colors_rgb = [c[::-1]/255 for c in cluster_colors_bgr]  # BGR → RGB → 0~1
+
 # 중심값 정수형 변환 및 결과 이미지 만들기
 center = np.uint8(centers)
 res = center[labels.flatten()].reshape(resized.shape)
-
-# ------------------------------
-# 하나의 matplotlib 창에 두 결과 합치기
-# ------------------------------
 res_rgb = cv2.cvtColor(res, cv2.COLOR_BGR2RGB)
 resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
 merged_rgb = np.hstack((resized_rgb, res_rgb))  # 좌우 합치기
 
-plt.figure(figsize=(12, 6))
+# ------------------------------
+# 하나의 matplotlib 창에 모든 시각화
+# ------------------------------
+plt.figure(figsize=(15, 6))
 
 # subplot 1: 이미지 비교
-plt.subplot(1, 2, 1)
+plt.subplot(1, 3, 1)
 plt.imshow(merged_rgb)
 plt.axis('off')
 plt.title('Original (Left) | KMeans (Right)')
 
-# subplot 2: 도넛 차트
-plt.subplot(1, 2, 2)
-plt.pie(pixel_ratios, labels=color_names, colors=target_colors/255,
+# subplot 2: 도넛 차트 (실제 클러스터 색상 사용)
+plt.subplot(1, 3, 2)
+plt.pie(pixel_ratios, labels=color_names, colors=cluster_colors_rgb,
         autopct='%.1f%%', startangle=90, counterclock=False, wedgeprops=dict(width=0.4))
-plt.title('Color Proportion (KMeans Grouping)')
+plt.title('Color Proportion by Cluster')
+
+# subplot 3: 막대 그래프 (실제 클러스터 색상 사용)
+plt.subplot(1, 3, 3)
+bars = plt.bar(range(3), pixel_counts, color=cluster_colors_rgb)
+plt.xticks(range(3), color_names)
+plt.ylabel("Pixel Count")
+plt.title("Pixel Count for Each Target Color")
+plt.grid(axis='y', linestyle='--', alpha=0.5)
 
 plt.tight_layout()
 plt.show()
