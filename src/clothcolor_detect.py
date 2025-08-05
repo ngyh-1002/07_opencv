@@ -3,32 +3,50 @@ import numpy as np
 import csv
 import os
 
-def save_color_and_image(colors, roi_img, index, filename='colors.csv', image_dir='images'):
-    os.makedirs(image_dir, exist_ok=True)
-    image_path = os.path.join(image_dir, f"color_{index:02d}.jpg")
-    cv2.imwrite(image_path, roi_img)
-
+def save_colors_to_csv(colors, filename='colors.csv'):
     file_exists = os.path.isfile(filename)
     with open(filename, mode='a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(['B', 'G', 'R', 'image_path'])
+            writer.writerow(['B', 'G', 'R'])
         for color in colors:
-            writer.writerow(color.tolist() + [image_path])
-    print(f"✅ [{index}] 색상 및 이미지 저장 완료: {image_path}")
+            writer.writerow(color.tolist())
+    print(f"CSV 파일 '{filename}'에 색상 추가 저장 완료!")
+
+def load_colors_from_csv(filename='colors.csv'):
+    colors = []
+    if os.path.isfile(filename):
+        with open(filename, newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader)  # 헤더 건너뜀
+            for row in reader:
+                b, g, r = map(int, row)
+                colors.append([b, g, r])
+    return np.array(colors, dtype=np.uint8)
+
+def knn_predict(train_colors, query_color, k=1):
+    distances = np.linalg.norm(train_colors - query_color, axis=1)
+    nearest_idx = np.argpartition(distances, k-1)[:k]
+    return nearest_idx[0]
+
+# --- 색상 인덱스를 사람이 보기 쉽게 매핑 ---
+color_labels = ['카키', '하얀', '검정']  # 저장된 순서에 맞게!
 
 # 초기 설정
 img1 = None
+img2 = None
 win_name = 'Camera Matching'
-K = 1  # 대표 색상 개수
+K = 1
 max_save_count = 30
 save_count = 0
-csv_path = '../colors.csv'
-image_folder = '../img'
 
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+train_colors = load_colors_from_csv('../colors.csv')
+
+criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10 , 1.0)
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -36,81 +54,50 @@ while cap.isOpened():
         break
 
     res = frame.copy()
-
-    if img1 is not None:
-        data = img1.reshape((-1, 3)).astype(np.float32)
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10 , 1.0)
-        ret, label, center = cv2.kmeans(data, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-        center = np.uint8(center)
-
     cv2.imshow(win_name, res)
     key = cv2.waitKey(1) & 0xFF
 
-    # ESC 종료
-    if key == 27:
+    if key == 27:  # ESC
         break
 
-    # space: ROI 저장
-    elif key == ord(' '):
+    elif key == ord(' '):  # ROI 선택 + 저장
         if save_count < max_save_count:
             x, y, w, h = cv2.selectROI(win_name, frame, False)
             if w and h:
                 img1 = frame[y:y+h, x:x+w]
-                print(f"[{save_count+1}/{max_save_count}] ROI 선택됨: ({x}, {y}, {w}, {h})")
-
-                data = img1.reshape((-1, 3)).astype(np.float32)
+                data = img1.reshape((-1,3)).astype(np.float32)
                 ret, label, center = cv2.kmeans(data, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
                 center = np.uint8(center)
-                save_color_and_image(center, img1, save_count + 1, filename=csv_path, image_dir=image_folder)
+                save_colors_to_csv(center, '../colors.csv')
+
+                # CSV 갱신
+                train_colors = load_colors_from_csv('../colors.csv')
                 save_count += 1
+                print(f"[{save_count}/{max_save_count}] ROI 저장 완료.")
         else:
-            print("❌ 저장 횟수 초과 (30회). 더 이상 저장할 수 없습니다.")
+            print("⚠️ 저장 횟수 초과: 더 이상 저장되지 않습니다.")
 
-    # d: 디텍션 모드
-    elif key == ord('d'):
-        print("🎯 디텍션 모드 시작")
+    elif key == ord('d'):  # ROI 선택 후 예측
+        if len(train_colors) > 0:
+            x, y, w, h = cv2.selectROI(win_name, frame, False)
+            if w and h:
+                img2 = frame[y:y+h, x:x+w]
+                data = img2.reshape((-1,3)).astype(np.float32)
+                ret, label, center = cv2.kmeans(data, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+                center = np.uint8(center)
+                print(f"추출된 대표 색상 (BGR): {center[0]}")
 
-        if not os.path.isfile(csv_path):
-            print("❌ CSV 파일 없음.")
-            continue
+                pred_idx = knn_predict(train_colors, center[0])
+                nearest_color = train_colors[pred_idx]
 
-        # 색상 불러오기
-        colors = []
-        with open(csv_path, newline='', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            next(reader)  # 헤더 건너뛰기
-            for row in reader:
-                if len(row) >= 4:
-                    bgr = list(map(int, row[:3]))
-                    colors.append(np.array(bgr, dtype=np.uint8))
+                if pred_idx < len(color_labels):
+                    predicted_label = color_labels[pred_idx]
+                else:
+                    predicted_label = f"Unknown (index={pred_idx})"
 
-        print(f"🎨 불러온 색상 수: {len(colors)}개")
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            output = frame.copy()
-
-            for color in colors:
-                lower = np.clip(color - 20, 0, 255)
-                upper = np.clip(color + 20, 0, 255)
-
-                mask = cv2.inRange(frame, lower, upper)
-                result = cv2.bitwise_and(output, output, mask=mask)
-
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                for cnt in contours:
-                    if cv2.contourArea(cnt) > 500:
-                        x, y, w, h = cv2.boundingRect(cnt)
-                        cv2.rectangle(output, (x, y), (x+w, y+h), (0, 255, 0), 2)
-
-            cv2.imshow("Detection Mode", output)
-            k = cv2.waitKey(1) & 0xFF
-            if k == 27:
-                print("🛑 디텍션 모드 종료")
-                break
+                print(f"🎯 예측 결과: {predicted_label} (인덱스 {pred_idx}, 색상 {nearest_color})")
+        else:
+            print("⚠️ 학습 데이터가 없습니다. 먼저 색상을 저장하세요.")
 
 cap.release()
 cv2.destroyAllWindows()
