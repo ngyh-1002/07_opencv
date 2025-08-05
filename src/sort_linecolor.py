@@ -7,6 +7,13 @@
 import numpy as np
 import cv2
 
+# 차선도로 색 지정
+Y = (209,252,255)
+B = (127,125,114)
+W = (235,238,236)
+
+# Y, B, W를 병합 ---③
+data = np.vstack((Y,B,W)).astype(np.float32)
 # K = 18 # 군집화 개수
 K = 8
 img = cv2.imread('../img/load_line.jpg')
