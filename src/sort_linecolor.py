@@ -6,41 +6,68 @@
 
 import numpy as np
 import cv2
+import matplotlib.pyplot as plt
 
-# 차선도로 색 지정
-Y = (209,252,255)
-B = (127,125,114)
-W = (235,238,236)
+# 기준 색상 (BGR)
+Y = np.array([209, 252, 255], dtype=np.float32)
+B = np.array([127, 125, 114], dtype=np.float32)
+W = np.array([235, 238, 236], dtype=np.float32)
+target_colors = np.vstack((Y, B, W))
+color_names = ['Yellow', 'Black', 'White']
 
-# Y, B, W를 병합 ---③
-data = np.vstack((Y,B,W)).astype(np.float32)
-# K = 18 # 군집화 개수
-K = 8
+# 이미지 불러오기 및 리사이즈
 img = cv2.imread('../img/load_line.jpg')
 resized = cv2.resize(img, (640, 480))
 data = resized.reshape((-1, 3)).astype(np.float32)
-# k-means는 2차원 배열만 처리할수있으므로 reshape으로 2차원배열로 변환 
-# EX) img.shape = (480, 640, 3)인 3차원이므로 reshape으로 바꿈
-# 데이터를 잃으면 안되므로 -1을 넣어 자동으로 480X640X3/3을 계산해 데이터를 유지
-# 데이터 평균을 구할때 소수점 이하값을 가질수 있으므로 변환
-# 반복 중지 조건
+
+# k-means 조건
+K = 20
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10 , 1.0)
 
-# 평균 클러스터링 적용
-ret, label, center = cv2.kmeans(data, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+# k-means 실행
+ret, labels, centers = cv2.kmeans(data, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
 
-# 중심값을 정수형으로 변환
+# centers와 target_colors 간 거리 계산
+dist_matrix = np.linalg.norm(centers[:, None] - target_colors[None, :], axis=2)
+closest_target_idx = np.argmin(dist_matrix, axis=1)
 
-center = np.uint8(center)
-print(center)
+# 클러스터별 픽셀 수
+unique, counts = np.unique(labels, return_counts=True)
 
-# 각레이블에 해당하는 중심값을 픽셀 값 선택
-res = center[label.flatten()]
-# 원본 영상의 형태로 변환
-res = res.reshape((resized.shape))
+# 각 target_color에 해당하는 픽셀 수 누적
+pixel_counts = np.zeros(len(target_colors), dtype=int)
+for cluster_idx, count in zip(unique, counts):
+    target_idx = closest_target_idx[cluster_idx]
+    pixel_counts[target_idx] += count
 
-# 결과 출력
-merged = np.hstack((resized, res))
-cv2.imshow('Kmeans color', merged)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+# 전체 대비 비율
+total_pixels = data.shape[0]
+pixel_ratios = pixel_counts / total_pixels
+
+# 중심값 정수형 변환 및 결과 이미지 만들기
+center = np.uint8(centers)
+res = center[labels.flatten()].reshape(resized.shape)
+
+# ------------------------------
+# 하나의 matplotlib 창에 두 결과 합치기
+# ------------------------------
+res_rgb = cv2.cvtColor(res, cv2.COLOR_BGR2RGB)
+resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+merged_rgb = np.hstack((resized_rgb, res_rgb))  # 좌우 합치기
+
+plt.figure(figsize=(12, 6))
+
+# subplot 1: 이미지 비교
+plt.subplot(1, 2, 1)
+plt.imshow(merged_rgb)
+plt.axis('off')
+plt.title('Original (Left) | KMeans (Right)')
+
+# subplot 2: 도넛 차트
+plt.subplot(1, 2, 2)
+plt.pie(pixel_ratios, labels=color_names, colors=target_colors/255,
+        autopct='%.1f%%', startangle=90, counterclock=False, wedgeprops=dict(width=0.4))
+plt.title('Color Proportion (KMeans Grouping)')
+
+plt.tight_layout()
+plt.show()
