@@ -1,65 +1,87 @@
 import cv2
-import csv
 import os
+import csv
+import numpy as np
 
-# 저장 경로 및 CSV 설정
-save_dir = '../cloth'
-csv_path = '../colors.csv'
+# CLAHE 설정 (LAB 색 공간에서 L 채널에 적용)
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
-# 디렉터리 없으면 생성
-os.makedirs(save_dir, exist_ok=True)
-
-# CSV 헤더 작성 (없을 때만)
-if not os.path.isfile(csv_path):
-    with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
+# CSV 파일 경로
+csv_file = 'color_labels.csv'
+if not os.path.exists(csv_file):
+    with open(csv_file, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['image_path'])
 
-# 초기 변수
-img1 = None
-win_name = 'Camera Matching'
-save_count = 0
-max_save_count = 30
+# 저장할 폴더
+save_folder = '../cloth'
+os.makedirs(save_folder, exist_ok=True)
 
-# 카메라 초기화
-cap = cv2.VideoCapture(0)              
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+# 웹캠 켜기
+cap = cv2.VideoCapture(0)
 
-while cap.isOpened():       
-    ret, frame = cap.read() 
+if not cap.isOpened():
+    print("Camera not accessible")
+    exit()
+
+# 영상 크기 가져오기
+ret, frame = cap.read()
+if not ret:
+    print("Can't read frame")
+    cap.release()
+    exit()
+
+h, w, _ = frame.shape
+
+# ROI 설정: 영상 중앙 기준 100x100
+roi_size = 100
+x = w // 2 - roi_size // 2
+y = h // 2 - roi_size // 2
+
+while True:
+    ret, frame = cap.read()
     if not ret:
         break
 
-    # ROI 선택 전 상태
-    res = frame.copy()
+    # ROI 사각형 표시
+    cv2.rectangle(frame, (x, y), (x + roi_size, y + roi_size), (0, 255, 0), 2)
+    cv2.imshow('Video', frame)
 
-    cv2.imshow(win_name, res)
-    key = cv2.waitKey(1) & 0xFF
+    key = cv2.waitKey(1)
+    if key == ord('q'):
+        break
 
-    if key == 27:  # ESC 키
-        break          
-    
-    elif key == ord(' '):  # 스페이스바 누를 때 ROI 저장
-        if save_count < max_save_count:
-            x, y, w, h = cv2.selectROI(win_name, frame, False)
-            if w and h:
-                img1 = frame[y:y+h, x:x+w]
-                img_name = f"roi_{save_count+1:02d}.jpg"
-                img_path = os.path.join(save_dir, img_name)
+    elif key == ord(' '):  # 스페이스바를 누르면 ROI 영역 저장
 
-                # 이미지 저장
-                cv2.imwrite(img_path, img1)
+        roi = frame[y:y + roi_size, x:x + roi_size]
 
-                # CSV에 경로 저장
-                with open(csv_path, mode='a', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([img_path])
+        # 🎯 조명에 강한 정규화
+        # LAB 색공간은 명도(L)를 분리해서 조정 가능.
+        # CLAHE는 밝은 부분과 어두운 부분을 모두 보정해서 조명에 강한 색상 보정 효과가 있어요.
+        # RGB에서 바로 조정하면 색상 왜곡이 생길 수 있음.
 
-                print(f"[{save_count+1}/{max_save_count}] ROI 저장됨: {img_path}")
-                save_count += 1
-        else:
-            print("⚠️ 저장 횟수 초과: 더 이상 저장되지 않습니다.")
+        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l_eq = clahe.apply(l)
+        lab_eq = cv2.merge((l_eq, a, b))
+        img1 = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
 
-cap.release()                          
+        # ✅ 가우시안 블러로 주름/섀도우 완화
+        img1 = cv2.GaussianBlur(img1, (5, 5), 0)
+
+        # 저장할 파일 번호 결정
+        existing_files = [f for f in os.listdir(save_folder) if f.endswith('.jpg')]
+        next_number = len(existing_files) + 1
+        filename = f"{next_number}.jpg"
+        file_path = os.path.join(save_folder, filename)
+        cv2.imwrite(file_path, img1)
+
+        # CSV 저장
+        with open(csv_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([file_path])
+
+        print(f"Saved: {file_path}")
+
+cap.release()
 cv2.destroyAllWindows()
